@@ -1,4 +1,4 @@
-﻿using DigitalWellbeing.Core;
+﻿/*using DigitalWellbeing.Core;
 using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
@@ -19,11 +19,12 @@ namespace DigitalWellbeingService.NET4._6
 
         private string folderPath;
         private string autoRunFilePath;
-
+        
         public ActivityLogger()
         {
             folderPath = ApplicationPath.UsageLogsFolder;
             autoRunFilePath = ApplicationPath.autorunFilePath;
+
 
             Debug.WriteLine(folderPath);
             Debug.WriteLine(autoRunFilePath);
@@ -51,6 +52,8 @@ namespace DigitalWellbeingService.NET4._6
 
             UpdateTimeEntry(proc);
         }
+
+
 
         private void UpdateTimeEntry(Process proc)
         {
@@ -124,3 +127,124 @@ namespace DigitalWellbeingService.NET4._6
         }
     }
 }
+*/
+
+using Newtonsoft.Json;
+using DigitalWellbeing.Core;
+using Microsoft.Win32;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+
+namespace DigitalWellbeingService.NET4._6
+{
+    public class ActivityLogger
+    {
+        public static readonly int TIMER_INTERVAL_SEC = 3;
+
+        private string folderPath;
+        private string autoRunFilePath;
+
+        public ActivityLogger()
+        {
+            folderPath = ApplicationPath.UsageLogsFolder;
+            autoRunFilePath = ApplicationPath.autorunFilePath;
+
+            Debug.WriteLine(folderPath);
+            Debug.WriteLine(autoRunFilePath);
+
+            TryCreateAutoRunFile();
+        }
+
+        private void TryCreateAutoRunFile()
+        {
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(ApplicationPath.AUTORUN_REGPATH);
+
+            bool isAutoRun = key.GetValue(ApplicationPath.AUTORUN_REGKEY) != null;
+
+            if (isAutoRun) File.Create(autoRunFilePath).Dispose();
+        }
+
+        public void OnTimer()
+        {
+            IntPtr handle = ForegroundWindowManager.GetForegroundWindow();
+            uint currProcessId = ForegroundWindowManager.GetForegroundProcessId(handle);
+            Process proc = Process.GetProcessById((int)currProcessId);
+
+            UpdateTimeEntry(proc);
+        }
+
+        private void UpdateTimeEntry(Process proc)
+        {
+            string filePath = $"{folderPath}{DateTime.Now:MM-dd-yyyy}.json";
+
+            try
+            {
+                List<UsageEntry> usageEntries;
+
+                if (File.Exists(filePath))
+                {
+                    string json = File.ReadAllText(filePath);
+                    try
+                    {
+                        usageEntries = JsonConvert.DeserializeObject<List<UsageEntry>>(json);
+                    }
+                    catch (JsonSerializationException)
+                    {
+                        usageEntries = new List<UsageEntry>();
+                    }
+                }
+                else
+                {
+                    usageEntries = new List<UsageEntry>();
+                }
+
+                bool found = false;
+
+                foreach (var entry in usageEntries)
+                {
+                    if (entry.ProcessName == proc.ProcessName)
+                    {
+                        entry.Duration += TIMER_INTERVAL_SEC;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    var newEntry = new UsageEntry
+                    {
+                        ProcessName = proc.ProcessName,
+                        ProgramName = ForegroundWindowManager.GetActiveProgramName(proc),
+                        Duration = TIMER_INTERVAL_SEC
+                    };
+
+                    usageEntries.Add(newEntry);
+                }
+
+                string updatedJson = JsonConvert.SerializeObject(usageEntries, Formatting.Indented);
+                File.WriteAllText(filePath, updatedJson);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                Directory.CreateDirectory(folderPath);
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine(ex);
+                return;
+            }
+        }
+
+        public class UsageEntry
+        {
+            public string ProcessName { get; set; }
+            public string ProgramName { get; set; }
+            public int Duration { get; set; }
+        }
+    }
+}
+
